@@ -26,9 +26,9 @@ faceType v nx ny level maxvol = foldr matricialSum v1 [v2,v3,v4]
   v4 = scaledMatrix 8 (minorMatrix v0 nx 1)
 
 levCells :: UArray (Int,Int,Int) Double -> Double -> Double
-         -> (([Int],[Int],[Int]),[Int])
+         -> (([Int],[Int],[Int]), Vector Int)
 levCells a level maxvol = -- (concatMap (fst.f) [1 .. (nz-1)], concatMap (snd.f) [1 .. (nz-1)])
-  ((v_i, v_j, v_k), concatMap snd cellsAndTypes)
+  ((v_i, v_j, v_k), UV.fromList $ concatMap snd cellsAndTypes)
   where
   ((_,_,_),(nx,ny,nz)) = bounds a
   types = V.fromList $ map (\k -> faceType (toMatrix a k) nx ny level maxvol) [1 .. nz]
@@ -44,7 +44,7 @@ levCells a level maxvol = -- (concatMap (fst.f) [1 .. (nz-1)], concatMap (snd.f)
   v_j = map ((+1) . (`mod` (ny-1)) . (`div` (nx-1))) cells
   v_k = map ((+1) . (`div` ((nx-1)*(ny-1)))) cells
 
-getBasic :: [Int] -> UArray (Int,Int,Int) Double -> Double -> (([Int],[Int],[Int]),[Int])
+getBasic :: [Int] -> UArray (Int,Int,Int) Double -> Double -> (([Int],[Int],[Int]), Vector Int)
          -> ((Vector Double, (Vector Double,Vector Double,Vector Double)), [Int], [Int])
 getBasic r vol level ((v_i,v_j,v_k),v_t) =
   ((values, (info1, info2, info3)), p1, cases)
@@ -74,14 +74,14 @@ getBasic r vol level ((v_i,v_j,v_k),v_t) =
   -- on verra si c'est bien de concaténer cube_co et value
   -- mieux : 4 vecteurs séparés
   p1 = map ((+1) . (*8)) [0 .. length r -1]
-  cases = [v_t !! (i-1) | i <- r]
+  cases = [v_t UV.! (i-1) | i <- r]
 
 edges_p1rep_1 :: [Int] -> [Int] -> ([Int],[Int])
 edges_p1rep_1 cases p1 =
-  (concat edges, concatMap (uncurry replicate) (zip counts p1))
+  (UV.toList $ UV.concat edges, concatMap (uncurry replicate) (zip counts p1))
   where
-  edges = map head [edgesTable!!(i-1) | i <- cases]
-  counts = map length edges
+  edges = map V.head [edgesTableV V.! (i-1) | i <- cases]
+  counts = map UV.length edges
 {-
 #       count <- sapply(edges, function(x) length(x)) # probablement qu'ici on n'a que des edges vecteurs
 #       edges <- cbind(unlist(edges), rep(p1, count))
@@ -143,7 +143,7 @@ preRender1 cases p1 information = transpose $ calPoint info
   info = getPoints edges p1rep information
 
 getTriangles1 :: [Int] -> UArray (Int,Int,Int) Double -> Double
-              -> (([Int],[Int],[Int]),[Int]) -> [[Double]]
+              -> (([Int],[Int],[Int]), Vector Int) -> [[Double]]
 getTriangles1 r vol level v = preRender1 cases p1 information
   where
   basics = getBasic r vol level v
@@ -235,7 +235,7 @@ computeContour3d vol maxvol' level x' y' z' =
   v = levCells vol level maxvol
 --  tcase = map (subtract 1) [caseRotationFlip0 UV.! i | i <- snd v]
 --  r = map (+1) $ findIndices (`elem` [1, 2, 5, 8, 9, 11, 14]) tcase
-  tcase = [caseRotationFlip0 UV.! i | i <- snd v]
+  tcase = [caseRotationFlip0 UV.! i | i <- UV.toList $ snd v]
   r = map (+1) $ findIndices (`elem` [2, 3, 6, 9, 10, 12, 15]) tcase
   triangles = if not $ null r then getTriangles1 r vol level v else [[]]
 
