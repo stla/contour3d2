@@ -4,6 +4,7 @@ import           Data.Array.Unboxed  (UArray, amap, array, bounds, elems, (!))
 -- import           Data.Array.Unboxed (UArray, amap, array, bounds, indices, ixmap, range, (!))
 -- import qualified Data.Array.Unboxed as A
 import           Data.List           (findIndices, transpose, zipWith4)
+import           Data.List.Split     (chunksOf)
 import           Data.Maybe          (fromMaybe)
 import           Data.Tuple.Extra    (fst3, snd3, swap, thd3)
 import qualified Data.Vector         as V
@@ -13,7 +14,13 @@ import           Matrices
 import           Tables
 import           Utils               (toTriplet)
 
+type Triangle = ((Double,Double,Double),(Double,Double,Double),(Double,Double,Double))
 
+toTriangle :: [[Double]] -> Triangle
+toTriangle triangleAsList = toTriplet (map toTriplet triangleAsList)
+
+toTriangles :: [[Double]] -> [Triangle]
+toTriangles trianglesAsList = map toTriangle (chunksOf 3 trianglesAsList)
 
 faceType :: UArray (Int,Int) Double -> Int -> Int -> Double -> Double -> UArray (Int,Int) Int
 faceType v nx ny level maxvol = foldr matricialSum v1 [v2,v3,v4]
@@ -64,12 +71,12 @@ getBasic r vol level ((v_i,v_j,v_k),v_t) =
   cube_co = zipWith (zipWith (+)) k1 k2
   values = UV.fromList $
             map (subtract level) [vol ! toTriplet ijk | ijk <- cube_co] ++ [0]
-  information_matrix = transpose (map (map fromIntegral) (cube_co ++ [[0,0,0]]))
   fromInt :: Int -> Double
   fromInt = fromIntegral
-  info1 = UV.map fromInt (UV.fromList (information_matrix !! 0))
-  info2 = UV.map fromInt (UV.fromList (information_matrix !! 1))
-  info3 = UV.map fromInt (UV.fromList (information_matrix !! 2))
+  information_matrix = transpose (map (map fromInt) (cube_co ++ [[0,0,0]]))
+  info1 = UV.fromList (information_matrix !! 0)
+  info2 = UV.fromList (information_matrix !! 1)
+  info3 = UV.fromList (information_matrix !! 2)
   -- information = transpose $ transpose (map (map fromIntegral) (cube_co ++ [[0,0,0]])) ++ [values]
   -- on verra si c'est bien de concaténer cube_co et value
   -- mieux : 4 vecteurs séparés
@@ -94,7 +101,9 @@ getPoints edges p1 (values, (info1, info2, info3)) = out -- correspond à matrix
   where
   x1 = [edgePoints1 UV.! (i-1) | i <- edges]
   x2 = [edgePoints2 UV.! (i-1) | i <- edges]
-  lambda = map (realToFrac . floor . (/9) . fromIntegral) x1
+  floor' :: Double -> Int
+  floor' = floor
+  lambda = map (realToFrac . floor' . (/9) . fromIntegral) x1
   mu = map (\x -> 1-x) lambda
   average w w' = zipWith (+) (zipWith (*) mu w) (zipWith (*) lambda w')
 --  v1357 = [info!!(i-2) | i <- zipWith (+) p1 x1]
@@ -222,16 +231,16 @@ getTriangles_i r vol level v =
 
 
 computeContour3d :: UArray (Int,Int,Int) Double -> Maybe Double -> Double
-                 -> Maybe [Int] -> Maybe [Int] -> Maybe [Int]
-                 -> [[Double]]
-computeContour3d vol maxvol' level x' y' z' =
-  triangles
+                 -- -> Maybe [Int] -> Maybe [Int] -> Maybe [Int]
+                 -> [Triangle]
+computeContour3d vol maxvol' level = -- x' y' z' =
+  toTriangles triangles
   where
   maxvol = fromMaybe (maximum (elems vol)) maxvol'
-  ((_,_,_),(nx,ny,nz)) = bounds vol
-  x = fromMaybe [1 .. nx] x'
-  y = fromMaybe [1 .. nx] y'
-  z = fromMaybe [1 .. nx] z'
+--  ((_,_,_),(nx,ny,nz)) = bounds vol
+--  x = fromMaybe [1 .. nx] x'
+--  y = fromMaybe [1 .. nx] y'
+--  z = fromMaybe [1 .. nx] z'
   v = levCells vol level maxvol
 --  tcase = map (subtract 1) [caseRotationFlip0 UV.! i | i <- snd v]
 --  r = map (+1) $ findIndices (`elem` [1, 2, 5, 8, 9, 11, 14]) tcase
@@ -239,34 +248,57 @@ computeContour3d vol maxvol' level x' y' z' =
   r = map (+1) $ findIndices (`elem` [2, 3, 6, 9, 10, 12, 15]) tcase
   triangles = if not $ null r then getTriangles1 r vol level v else [[]]
 
--- ~~ TESTS ~~ --
+marchingCubes :: ((Double,Double,Double) -> Double)   -- function
+              -> Double            -- isolevel
+              -> ((Double,Double),(Double,Double),(Double,Double))  -- bounds
+              -> Int               -- grid subdivisions
+              -> [Triangle]
+marchingCubes fun level xyzbounds subd = map (rescale xyzbounds) triangles
+  where
+  triangles = computeContour3d (fun2array subd xyzbounds fun) Nothing level
+  fun2array n ((xm,xM),(ym,yM),(zm,zM)) f =
+    array ((1,1,1),(n,n,n))
+          [((i,j,k), f (x,y,z)) | i <- [1..n], j <- [1..n], k <- [1..n],
+                                  let x = sx i,
+                                  let y = sy j,
+                                  let z = sz k]
+    where
+    s a b l = a + (b-a) * fromIntegral (l-1) / fromIntegral (n-1)
+    sx = s xm xM
+    sy = s ym yM
+    sz = s zm zM
+  rescale ((xm,xM),(ym,yM),(zm,zM)) ((x1,y1,z1),(x2,y2,z2),(x3,y3,z3)) =
+    ((sx' x1, sy' y1, sz' z1), (sx' x2, sy' y2, sz' z2), (sx' x3, sy' y3, sz' z3))
+    where
+    s' a b u = a + (b-a) * u / fromIntegral (subd-1)
+    sx' = s' xm xM
+    sy' = s' ym yM
+    sz' = s' zm zM
+
+{-  > misc3d:::rescale
+function (i, x)
+{
+    nx <- length(x)
+    low <- pmin(pmax(1, floor(i)), nx - 1)
+    x[low] + (i - low) * (x[low + 1] - x[low])
+} -}
+  -- ~~ TESTS ~~ --
+{-
 v' :: UArray (Int,Int,Int) Double
 v' = array ((1,1,1),(3,3,3))
             [((i,j,k), x*x+y*y+z*z) | i <- [1..3], j <- [1..3], k <- [1..3],
                                       let x = 1 + fromIntegral i,
                                       let y = 1 + fromIntegral j,
                                       let z = 1 + fromIntegral k]
-{- getInfo = snd . fst3
+getInfo = snd . fst3
 test_levCells = levCells v' 22 48
 test_getBasic = getBasic [1,2,3,4,5,6,7] v' 22 test_levCells
 test_edges_p1rep = edges_p1rep_1 (thd3 test_getBasic) (snd3 test_getBasic)
 test_getPoints = getPoints (fst test_edges_p1rep) (snd test_edges_p1rep) (getInfo test_getBasic)
 test_preRender1 = preRender1 (thd3 test_getBasic) (snd3 test_getBasic) (getInfo test_getBasic)
 -}
-
-fun2array :: Int -> (Double,Double) -> (Double -> Double -> Double -> Double)
-          -> UArray (Int,Int,Int) Double
-fun2array n (a,b) f =
-    array ((1,1,1),(n,n,n))
-            [((i,j,k), f x y z) | i <- [1..n], j <- [1..n], k <- [1..n],
-                                  let x = s i,
-                                  let y = s j,
-                                  let z = s k]
-    where
-        s l = a + (b-a) * fromIntegral (l-1) / fromIntegral (n-1)
-
-mytestf :: Double -> Double -> Double -> Double
-mytestf x y z =
+mytestf :: (Double, Double, Double) -> Double
+mytestf (x,y,z) =
     ((x2 + y2 - 1)**2 + z2) * ((y2 + z2 - 1)**2 + x2) *
         ((z2 + x2 - 1)**2 + y2) - a**2*(1 + b*(x2 + y2 + z2))
     where
@@ -276,4 +308,5 @@ mytestf x y z =
     y2 = y*y
     z2 = z*z
 
-tris = computeContour3d (fun2array 100 (-1.6,1.6) mytestf) Nothing 0 Nothing Nothing Nothing
+tris = marchingCubes mytestf 0 ((-1.6,1.6),(-1.6,1.6),(-1.6,1.6)) 100
+-- tris = computeContour3d (fun2array 100 (-1.6,1.6) mytestf) Nothing 0 Nothing Nothing Nothing
